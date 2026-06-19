@@ -188,15 +188,10 @@ button:disabled{opacity:.65;cursor:not-allowed;transform:none}
       <input id="telefone" autocomplete="off" inputmode="tel" type="tel" placeholder="Ex: (83) 99999-9999">
 
       <label>Serviço desejado</label>
-      <select id="servico">
-        <option value="">Selecione um serviço</option>
-        <option>Corte</option>
-        <option>Barba</option>
-        <option>Corte + Barba</option>
-        <option>Sobrancelha</option>
-        <option>Acabamento</option>
-        <option>Outro</option>
+      <select id="servico" disabled>
+        <option value="">Carregando serviços...</option>
       </select>
+      <div id="servicoHelp" class="field-help gold">Selecione o serviço desejado.</div>
 
       <label>Barbeiro</label>
       <select id="barbeiro" disabled>
@@ -248,6 +243,8 @@ const WHATSAPP_BARBEARIA = "5583991552729";
 const form = document.getElementById("formAgendamento");
 const msg = document.getElementById("msg");
 const btn = document.getElementById("btnAgendar");
+const campoServico = document.getElementById("servico");
+const servicoHelp = document.getElementById("servicoHelp");
 const campoBarbeiro = document.getElementById("barbeiro");
 const campoData = document.getElementById("data");
 const campoHora = document.getElementById("hora");
@@ -256,6 +253,7 @@ const agendaInfo = document.getElementById("agendaInfo");
 
 let configAgenda = {
   barbeiros: [],
+  servicos: [],
   horariosDataBarbeiro: {},
   diasFechadosBarbeiro: {}
 };
@@ -319,39 +317,98 @@ function esconderAgendaInfo(){
   agendaInfo.textContent = "";
 }
 
-async function carregarConfiguracaoAgenda(){
-  try{
-    setHelp(barbeiroHelp, "Carregando barbeiros da gestão...", "gold");
-    const doc = await db.collection("configuracoes").doc("agendamento").get();
 
-    if(doc.exists){
-      const data = doc.data() || {};
+function money(v){
+  return Number(v||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+}
+
+function popularServicos(){
+  if(!campoServico)return;
+  const atual = campoServico.value;
+  const servicosAtivos = (configAgenda.servicos || []).filter(s => s && s.ativo !== false);
+
+  if(!servicosAtivos.length){
+    campoServico.innerHTML = `<option value="">Nenhum serviço cadastrado</option>`;
+    campoServico.disabled = true;
+    setHelp(servicoHelp, "Nenhum serviço foi cadastrado na gestão ainda.", "err");
+    return;
+  }
+
+  campoServico.innerHTML = `<option value="">Selecione um serviço</option>` +
+    servicosAtivos.map(s => {
+      const nome = String(s.nome || s.servico || s.titulo || "Serviço").trim();
+      const valor = Number(s.valor || s.preco || 0);
+      const texto = valor > 0 ? `${nome} — ${money(valor)}` : nome;
+      return `<option value="${nome.replace(/"/g,'&quot;')}" data-valor="${valor}">${texto}</option>`;
+    }).join("");
+
+  campoServico.disabled = false;
+
+  if([...campoServico.options].some(o => o.value === atual)){
+    campoServico.value = atual;
+  }
+
+  setHelp(servicoHelp, "Selecione o serviço desejado.", "ok");
+}
+
+function popularBarbeiros(){
+  const barbeirosAtivos = configAgenda.barbeiros.filter(b => b && b.ativo !== false);
+  const atual = campoBarbeiro.value;
+
+  if(!barbeirosAtivos.length){
+    campoBarbeiro.innerHTML = `<option value="">Nenhum barbeiro disponível</option>`;
+    campoBarbeiro.disabled = true;
+    limparHorarios("Sem horários disponíveis");
+    setHelp(barbeiroHelp, "Nenhum barbeiro foi cadastrado na gestão ainda.", "err");
+    return;
+  }
+
+  campoBarbeiro.innerHTML =
+    `<option value="">Selecione o barbeiro</option>` +
+    barbeirosAtivos.map(b => `<option value="${b.id}">${b.nome}</option>`).join("");
+
+  if([...campoBarbeiro.options].some(o => o.value === atual)){
+    campoBarbeiro.value = atual;
+  }
+
+  campoBarbeiro.disabled = false;
+  setHelp(barbeiroHelp, "Escolha o barbeiro para ver os horários disponíveis.", "ok");
+}
+
+function carregarConfiguracaoAgenda(){
+  try{
+    setHelp(servicoHelp, "Carregando serviços...", "gold");
+    setHelp(barbeiroHelp, "Carregando barbeiros da gestão...", "gold");
+
+    db.collection("configuracoes").doc("agendamento").onSnapshot(doc => {
+      const data = doc.exists ? (doc.data() || {}) : {};
+
       configAgenda.barbeiros = Array.isArray(data.barbeiros) ? data.barbeiros : [];
+      configAgenda.servicos = Array.isArray(data.servicos) ? data.servicos : [];
       configAgenda.horariosDataBarbeiro = data.horariosDataBarbeiro && typeof data.horariosDataBarbeiro === "object" ? data.horariosDataBarbeiro : {};
       configAgenda.diasFechadosBarbeiro = data.diasFechadosBarbeiro && typeof data.diasFechadosBarbeiro === "object" ? data.diasFechadosBarbeiro : {};
-    }
 
-    const barbeirosAtivos = configAgenda.barbeiros.filter(b => b && b.ativo !== false);
-
-    if(!barbeirosAtivos.length){
-      campoBarbeiro.innerHTML = `<option value="">Nenhum barbeiro disponível</option>`;
+      popularServicos();
+      popularBarbeiros();
+      carregarHorariosDisponiveis();
+    }, error => {
+      console.error(error);
+      campoServico.innerHTML = `<option value="">Erro ao carregar serviços</option>`;
+      campoServico.disabled = true;
+      campoBarbeiro.innerHTML = `<option value="">Erro ao carregar barbeiros</option>`;
       campoBarbeiro.disabled = true;
-      limparHorarios("Sem horários disponíveis");
-      setHelp(barbeiroHelp, "Nenhum barbeiro foi cadastrado na gestão ainda.", "err");
-      return;
-    }
-
-    campoBarbeiro.innerHTML =
-      `<option value="">Selecione o barbeiro</option>` +
-      barbeirosAtivos.map(b => `<option value="${b.id}">${b.nome}</option>`).join("");
-
-    campoBarbeiro.disabled = false;
-    setHelp(barbeiroHelp, "Escolha o barbeiro para ver os horários disponíveis.", "ok");
+      limparHorarios("Erro ao carregar");
+      setHelp(servicoHelp, "Erro ao carregar serviços. Verifique a conexão ou o Firebase.", "err");
+      setHelp(barbeiroHelp, "Erro ao carregar agenda. Verifique a conexão ou o Firebase.", "err");
+    });
   }catch(error){
     console.error(error);
+    campoServico.innerHTML = `<option value="">Erro ao carregar serviços</option>`;
+    campoServico.disabled = true;
     campoBarbeiro.innerHTML = `<option value="">Erro ao carregar barbeiros</option>`;
     campoBarbeiro.disabled = true;
     limparHorarios("Erro ao carregar");
+    setHelp(servicoHelp, "Erro ao carregar serviços. Verifique a conexão ou o Firebase.", "err");
     setHelp(barbeiroHelp, "Erro ao carregar agenda. Verifique a conexão ou o Firebase.", "err");
   }
 }
@@ -439,7 +496,8 @@ form.addEventListener("submit", async (e) => {
 
   const nome = document.getElementById("nome").value.trim();
   const telefone = document.getElementById("telefone").value.trim();
-  const servico = document.getElementById("servico").value;
+  const servico = campoServico.value;
+  const servicoValor = Number(campoServico.options[campoServico.selectedIndex]?.dataset?.valor || 0);
   const barbeiroId = campoBarbeiro.value;
   const data = campoData.value;
   const hora = campoHora.value;
@@ -475,6 +533,7 @@ form.addEventListener("submit", async (e) => {
       nome,
       telefone,
       servico,
+      servicoValor,
       barbeiroId,
       barbeiroNome,
       data,
@@ -490,7 +549,7 @@ form.addEventListener("submit", async (e) => {
       "📅 *NOVO AGENDAMENTO - LORD BARBEARIA*\n\n" +
       "*Cliente:* " + nome + "\n" +
       "*WhatsApp:* " + telefone + "\n" +
-      "*Serviço:* " + servico + "\n" +
+      "*Serviço:* " + servico + (servicoValor ? " (" + money(servicoValor) + ")" : "") + "\n" +
       "*Barbeiro:* " + barbeiroNome + "\n" +
       "*Data:* " + dataBR(data) + "\n" +
       "*Horário:* " + hora + "\n" +
